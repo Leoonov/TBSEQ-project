@@ -1,0 +1,928 @@
+---
+title: "TB_bacterioscopy"
+author: "Vadim Leonov"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+#LIBRARIES
+
+library(dplyr)
+library(readxl)
+library(tidyverse)
+library(nnet)
+library(tidyr)
+
+```
+
+
+```{r}
+###Download data
+
+data <- "C:/Users/M0sa2/Desktop/Master's Degree Final Project/TB_lineage_grouped.xlsx"
+data <- read_excel(data)
+
+# Convert character variables to factors
+data <- data %>%
+  mutate(across(where(is.character), as.factor))
+str(data)
+
+
+```
+
+
+
+
+```{r}
+############# MTBC lineages comparison over time (monthly) ###############################################################
+
+#trend analysis
+
+# Fit linear regression models for each lineage
+lineage_trends <- data_monthly %>%
+  group_by(Lineage_gr) %>%
+  do(model = lm(Count ~ Month, data = .))
+
+# Extract coefficients, p-values, and create trend data frame
+trend_data <- lineage_trends %>%
+  summarise(Lineage_gr = Lineage_gr,
+            Intercept = coef(model)[1],
+            Slope = coef(model)[2],
+            P_value = summary(model)$coefficients[2, "Pr(>|t|)"])
+
+# Print the summary of trends including p-values
+print(trend_data)
+
+
+```
+```{r}
+############## SINCE JULY 2022 ############################################################################
+
+# Filter data to include observations from July 2022 onwards
+data_from_july_2022 <- data_monthly %>%
+  filter(Month >= ymd("2022-07-01"))  # Assuming 'Month' is of class Date or POSIXct
+
+# Fit linear regression models for each lineage
+lineage_trends <- data_from_july_2022 %>%
+  group_by(Lineage_gr) %>%
+  do(model = lm(Count ~ Month, data = .))
+
+# Extract coefficients, p-values, and create trend data frame
+trend_data <- lineage_trends %>%
+  summarise(Lineage_gr = Lineage_gr,
+            Intercept = coef(model)[1],
+            Slope = coef(model)[2],
+            P_value = summary(model)$coefficients[2, "Pr(>|t|)"])
+
+# Print the summary of trends including p-values
+print(trend_data)
+
+```
+
+
+```{r}
+
+data$`Date of Sample collection (dd/mm/yyyy)` <- as.Date(data$`Date of Sample collection (dd/mm/yyyy)`, format = "%Y-%m-%d") 
+# Aggregate by Lineage and Month
+data_monthly <- data %>%
+  mutate(Month = floor_date(`Date of Sample collection (dd/mm/yyyy)` , "month")) %>%
+  group_by(Lineage_gr, Month) %>%
+  summarise(Count = n(), .groups = 'drop')
+
+# Define custom colors for lineages, setting L4.10 to black or red
+custom_colors <- c("L4.10" = "blue", 
+                   "L3" = "yellow", 
+                   "L4.3.2" = "orange", 
+                   "L4.3.3" = "pink", 
+                   "L4.3" = "red",  # Corrected: Added comma after "orange"
+                   "L4.1.2" = "green", 
+                   "L4.1.2.1" = "lightgreen")
+
+
+# Create the bar plot with custom colors for each lineage
+ggplot(data_monthly, aes(x = Month, y = Count, fill = Lineage_gr)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = " ",
+       x = "Month",
+       y = "Number of Cases",
+       fill = "MTBC Lineage") +
+  theme_minimal() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = custom_colors)
+
+
+```
+```{r}
+
+# Assuming data_monthly is already defined as per your previous steps
+
+# Filter data from July 2022 onwards
+data_from_july_2022 <- data_monthly %>%
+  filter(Month >= as.Date("2022-07-01"))
+
+# Create the bar plot with custom colors for each lineage
+ggplot(data_from_july_2022, aes(x = Month, y = Count, fill = Lineage_gr)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Number of MTBC Cases Over Time",
+       x = "Month",
+       y = "Number of Cases",
+       fill = "MTBC Lineage") +
+  theme_minimal() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = custom_colors)
+
+```
+`
+
+```{r}
+################################## GEOGRAPHICAL DISTRIBUTION (FISHER'S EXACT TEST) ################################
+
+# data for all sublineages of TB
+lineages <- list(L1 = data$L1p, L2 = data$L2p, L3 = data$L3p, L4.1.1 = data$L4.1.1p,  L4.3.1 = data$L4.3.1p, L4.3.3 = data$L4.3.3p, L4.3.2 = data$L4.3.2p, L4.3.4 = data$L4.3.4p, L4.1.2 = data$L4.1.2p, L4.10 = data$L4.10p, L4.1.2.1 = data$L4.1.2.1p)
+
+# Function to perform Fisher's exact test between two lineages
+perform_fisher_test <- function(lineage1, lineage2) {
+  lineage1_binary <- ifelse(lineage1 > 0, 1, 0)
+  lineage2_binary <- ifelse(lineage2 > 0, 1, 0)
+  
+  # Contingency table
+  contingency_table <- table(lineage1_binary, lineage2_binary)
+  
+  # Fisher's exact test
+  fisher_test_result <- fisher.test(contingency_table)
+  
+  return(fisher_test_result)
+}
+
+# Loop through each pair of lineages and perform Fisher's exact test
+results <- list()
+lineage_names <- names(lineages)
+
+for (i in 1:(length(lineages) - 1)) {
+  for (j in (i + 1):length(lineages)) {
+    lineage1_name <- lineage_names[i]
+    lineage2_name <- lineage_names[j]
+    
+    test_result <- perform_fisher_test(lineages[[i]], lineages[[j]])
+    
+    results[[paste(lineage1_name, "vs", lineage2_name)]] <- test_result
+  }
+}
+
+# Display results
+results
+
+```
+
+```{r}
+##################### GEOGRAPHICAL DISTRIBUTION - FOR L4 (FISHER'S EXACT TEST) #########################################
+
+# data for all sublineages of TB
+lineages <- list(L4.1.1 = data$L4.1.1p, L4.3.1 = data$L4.3.1p, L4.3.2 = data$L4.3.2p, L4.3.3 = data$L4.3.3p,  L4.3.4 = data$L4.3.4p, L4.10 = data$L4.10p, L4.1.2 = data$L4.1.2p, L4.1.2.1 = data$L4.1.2.1p, L4.4p = data$L4.4p, L4.5 = data$L4.5p, L4.6 = data$L4.6p, L4.2 = data$L4.2p, L4.1.3 = data$L4.1.3p, L4p = data$L4p)
+
+# Function to perform Fisher's exact test between two lineages
+perform_fisher_test <- function(lineage1, lineage2) {
+  lineage1_binary <- ifelse(lineage1 > 0, 1, 0)
+  lineage2_binary <- ifelse(lineage2 > 0, 1, 0)
+  
+  # Contingency table
+  contingency_table <- table(lineage1_binary, lineage2_binary)
+  
+  # Fisher's exact test
+  fisher_test_result <- fisher.test(contingency_table)
+  
+  return(fisher_test_result)
+}
+
+# Loop through each pair of lineages and perform Fisher's exact test
+results <- list()
+lineage_names <- names(lineages)
+
+for (i in 1:(length(lineages) - 1)) {
+  for (j in (i + 1):length(lineages)) {
+    lineage1_name <- lineage_names[i]
+    lineage2_name <- lineage_names[j]
+    
+    test_result <- perform_fisher_test(lineages[[i]], lineages[[j]])
+    
+    results[[paste(lineage1_name, "vs", lineage2_name)]] <- test_result
+  }
+}
+
+# Display results
+results
+```
+
+
+```{r}
+
+##################### GEOGRAPHICAL DISTRIBUTION - differently grouped strains (FISHER'S EXACT TEST) ####################
+
+# data for all sublineages of TB
+lineages <- list(L1 = data$L1p, L2 = data$L2p, L3 = data$L3p, L4.1.1 = data$L4.1.1p,  L4.3 = data$L4.3p, L4.10 = data$L4.10p, L4.1.2 = data$L4.1.2p)
+
+# Function to perform Fisher's exact test between two lineages
+perform_fisher_test <- function(lineage1, lineage2) {
+  lineage1_binary <- ifelse(lineage1 > 0, 1, 0)
+  lineage2_binary <- ifelse(lineage2 > 0, 1, 0)
+  
+  # Contingency table
+  contingency_table <- table(lineage1_binary, lineage2_binary)
+  
+  # Fisher's exact test
+  fisher_test_result <- fisher.test(contingency_table)
+  
+  return(fisher_test_result)
+}
+
+# Loop through each pair of lineages and perform Fisher's exact test
+results <- list()
+lineage_names <- names(lineages)
+
+for (i in 1:(length(lineages) - 1)) {
+  for (j in (i + 1):length(lineages)) {
+    lineage1_name <- lineage_names[i]
+    lineage2_name <- lineage_names[j]
+    
+    test_result <- perform_fisher_test(lineages[[i]], lineages[[j]])
+    
+    results[[paste(lineage1_name, "vs", lineage2_name)]] <- test_result
+  }
+}
+
+# Display results
+results
+```
+
+
+```{r}
+################################# MICROSCOPY RESULT (LOGISTIC REGRESSION) ###############################
+
+# Relevel the Lineage_gr variable to set a new baseline (e.g., L3)
+data$Lineage_gr <- relevel(data$Lineage_gr, ref = "L4.1.2")
+
+# Fit the logistic regression model with the new baseline
+model <- glm(data$Microscopy ~ data$Lineage_gr, family = binomial, data = data)
+summary(model)
+# Extract coefficients and standard errors from the model
+coefficients <- coef(model)
+std_errors <- summary(model)$coefficients[, "Std. Error"]
+
+# Initialize vectors to store AOR and CI values
+AOR <- exp(coefficients)
+lower_CI <- exp(coefficients - 1.96 * std_errors)
+upper_CI <- exp(coefficients + 1.96 * std_errors)
+
+# Prepare a data frame to display results
+results <- data.frame(
+  Lineage_gr = names(coefficients),
+  AOR = AOR,
+  Lower_CI = lower_CI,
+  Upper_CI = upper_CI
+)
+
+# Display the results
+print(results)
+
+
+```
+```{r}
+################################# TB LOCATION (LOGISTIC REGRESSION) ###############################
+
+# Relevel the Lineage_gr variable to set a new baseline (e.g., L3)
+data$Lineage_gr <- relevel(data$Lineage_gr, ref = "L4.1.2")
+
+# Fit the logistic regression model with the new baseline
+model <- glm(data$`Location  of TB` ~ data$Lineage_gr, family = binomial, data = data)
+summary(model)
+# Extract coefficients and standard errors from the model
+coefficients <- coef(model)
+std_errors <- summary(model)$coefficients[, "Std. Error"]
+
+# Initialize vectors to store AOR and CI values
+aOR <- exp(coefficients)
+lower_CI <- exp(coefficients - 1.96 * std_errors)
+upper_CI <- exp(coefficients + 1.96 * std_errors)
+
+# Prepare a data frame to display results
+results <- data.frame(
+  Lineage_gr = names(coefficients),
+  aOR = aOR,
+  Lower_CI = lower_CI,
+  Upper_CI = upper_CI
+)
+
+# Display the results
+print(results)
+```
+
+```{r}
+data
+x<-data$L4.3.3p 
+x<- round(data$L4.3.3p / 100 * 43)
+y<-round(data$L4.1.2p / 100 * 43)
+
+# Combining counts into a contingency table
+contingency_table <- matrix(c(x, y), ncol = 2)
+colnames(contingency_table) <- c("L4.3.3", "L4.1.2")
+rownames(contingency_table) <- paste("Region", 1:length(43))
+
+print(contingency_table)
+
+
+
+
+# Create a contingency table
+cont_table <- table(data$L4.3.3p, data$L4.1.2p)
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L3")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.3")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.10")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+```
+
+
+
+```{r}
+############################# MIGRATION TIME (FISHER EXACT TEST) #######################################################
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.1.2")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L3")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.3")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.10")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+```
+
+
+```{r}
+
+############################# MIGRATION TIME (FISHER EXACT TEST) FOR MORE LINEAGES ##########################################
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.1.2")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.1.2.1")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L3")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.3.2")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.3.3")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.3.4")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+# Create a contingency table
+cont_table <- table(data$Migration, data$Lineage_gr == "L4.10")
+
+# Perform Fisher's Exact Test
+fisher_result <- fisher.test(cont_table)
+
+# Print the results
+print(fisher_result)
+
+
+```
+
+```{r}
+
+#### TO CALCULATE COR WITH CI (IF WE NEED IT) #########################################################################
+
+odds_ratios <- apply(cont_table, 2, function(x) x / x["Spain"])
+
+# Print crude odds ratios
+print("Crude Odds Ratios (Spain as reference):")
+print(odds_ratios)
+
+# Calculate Confidence Intervals for COR
+# Using a method for calculating confidence intervals for odds ratios
+# Function to calculate confidence intervals for odds ratios
+# This function computes 95% confidence intervals for odds ratios
+ci_odds_ratio <- function(cont_table, ref_category) {
+  odds_ratios <- apply(cont_table, 2, function(x) x / x[ref_category])
+  
+  # Calculate standard errors
+  se_log_or <- sqrt(1 / cont_table[1, ] + 1 / cont_table[2, ] + 1 / cont_table[3, ])
+  
+  # Compute confidence intervals (95%)
+  ci <- exp(log(odds_ratios) + qnorm(0.975) * se_log_or)  # Upper bound
+  ci_lower <- exp(log(odds_ratios) - qnorm(0.975) * se_log_or)  # Lower bound
+  
+  return(data.frame(odds_ratio = odds_ratios, ci_lower = ci_lower, ci_upper = ci))
+}
+
+# Calculate confidence intervals for COR
+ci <- ci_odds_ratio(cont_table, "Spain")
+
+# Print confidence intervals
+print("Confidence Intervals for Crude Odds Ratios:")
+print(ci)
+
+```
+
+
+```{r}
+###################### Location of TB process #####################################
+
+####Pairwise comparison for ALL lineages using Fisher exact test
+
+# Define your contingency table
+contingency_table <- table(data$`Location  of TB`, data$Lineage_gr)
+
+# List of lineages to compare pairwise
+lineages <- colnames(contingency_table)
+
+# Perform Fisher's Exact Test pairwise and store significant results
+significant_results <- list()
+
+for (i in 1:(length(lineages) - 1)) {
+  for (j in (i + 1):length(lineages)) {
+    lineage1 <- lineages[i]
+    lineage2 <- lineages[j]
+    
+    # Subset contingency table for the pair
+    contingency_sub <- contingency_table[, c(lineage1, lineage2)]
+    
+    # Perform Fisher's Exact Test
+    fisher_test <- fisher.test(contingency_sub, workspace = 2e8)
+    
+    # Check if p-value is <= 0.05
+    if (fisher_test$p.value <= 0.05) {
+      # Store significant results
+      result_name <- paste(lineage1, lineage2, sep = "_vs_")
+      significant_results[[result_name]] <- fisher_test
+    }
+  }
+}
+
+# Print significant results
+if (length(significant_results) > 0) {
+  cat("Significant Results (p <= 0.05):\n")
+  for (key in names(significant_results)) {
+    cat("Comparison:", key, "\n")
+    print(significant_results[[key]])
+    cat("\n")
+  }
+} else {
+  cat("No significant results (p <= 0.05) found.\n")
+}
+
+
+
+
+```
+
+```{r}
+################################# MICROSCOPY OUTPUT ###############################
+
+####Pairwise comparison for ALL lineages using Fisher exact test
+
+# Define your contingency table
+contingency_table <- table(data$Microscopy, data$Lineage_gr)
+
+# List of lineages to compare pairwise
+lineages <- colnames(contingency_table)
+
+# Perform Fisher's Exact Test pairwise and store significant results
+significant_results <- list()
+
+for (i in 1:(length(lineages) - 1)) {
+  for (j in (i + 1):length(lineages)) {
+    lineage1 <- lineages[i]
+    lineage2 <- lineages[j]
+    
+    # Subset contingency table for the pair
+    contingency_sub <- contingency_table[, c(lineage1, lineage2)]
+    
+    # Perform Fisher's Exact Test
+    fisher_test <- fisher.test(contingency_sub, workspace = 2e8)
+    
+    # Check if p-value is <= 0.05
+    if (fisher_test$p.value <= 0.05) {
+      # Store significant results
+      result_name <- paste(lineage1, lineage2, sep = "_vs_")
+      significant_results[[result_name]] <- fisher_test
+    }
+  }
+}
+
+# Print significant results
+if (length(significant_results) > 0) {
+  cat("Significant Results (p <= 0.05):\n")
+  for (key in names(significant_results)) {
+    cat("Comparison:", key, "\n")
+    print(significant_results[[key]])
+    cat("\n")
+  }
+} else {
+  cat("No significant results (p <= 0.05) found.\n")
+}
+
+
+```
+
+
+
+
+```{r}
+
+# Recode Migration variable with Spain as reference category
+data$Migration_binary <- ifelse(data$Migration == "Spain", 1, 0)
+data$County<-data$`County (comarca)`
+
+```
+
+
+```{r}
+
+######################## MULTINOMINAL MODEL ##############################################################
+
+# Combine less frequent categories into "Other"
+data$Origin_country <- as.character(data$`Origin country`)
+freq_table <- table(data$Origin_country)
+rare_categories <- names(freq_table[freq_table < 10])  # Threshold can be adjusted
+data$Origin_country[data$Origin_country %in% rare_categories] <- "Other"
+data$Origin_country <- as.factor(data$Origin_country)
+data$Country <- as.character(data$Country)
+
+#choose baseline
+data$Lineage_gr <- relevel(data$Lineage_gr, ref = "L4.1.2")
+data$Origin_country <- relevel(data$Origin_country, ref = "Spain")
+# Ensure that Country is a factor
+data$Country <- as.factor(data$Country)
+
+# Relevel the Country factor to set Spain as the reference category
+data$Country <- relevel(data$Country, ref = "Spain")
+
+data$Migration <- relevel(data$Migration, ref = "<5 years")
+
+
+# Fit the null model (intercept only)
+null_model <- multinom(Lineage_gr ~ 1, data = data)
+
+# Fit the full model
+full_model <- multinom(Lineage_gr ~ Origin_country, data = data)
+summary(full_model)
+
+# Log-likelihood for the null model
+logLik_null <- logLik(null_model)
+
+# Log-likelihood for the full model
+logLik_full <- logLik(full_model)
+
+lr_test_stat <- 2 * (logLik_full - logLik_null)
+
+df <- attr(logLik_full, "df") - attr(logLik_null, "df")
+
+p_value <- pchisq(lr_test_stat, df, lower.tail = FALSE)
+
+
+# Extract coefficients and standard errors
+coefs <- summary(full_model)$coefficients
+se <- summary(full_model)$standard.errors
+
+# Calculate z-values
+z_values <- coefs / se
+
+# Calculate p-values
+p_values <- 2 * (1 - pnorm(abs(z_values)))
+
+
+
+# Create dummy variables for the categorical predictor 'Origin_country'
+dummy_data <- model.matrix(~ Origin_country - 1, data = data)
+
+# Calculate correlation matrix for dummy variables
+correlation_matrix <- cor(dummy_data)
+
+condition_index <- kappa(dummy_data)
+print(condition_index)
+
+# Print correlation matrix
+print(correlation_matrix)
+
+```
+
+
+
+```{r}
+######################## CHI_SQUARE TEST: COUNTRY OF ORIGINS vs. SPANIARDS #################################################
+
+data <- data[, c("Lineage_gr", "Origin country")]
+
+# Check for missing values in the selected columns
+sum(is.na(data$Lineage_gr))  # Number of missing values in Lineage_gr
+sum(is.na(data$`Origin country`))  # Number of missing values in Origin country
+
+# Remove rows with missing values in the relevant columns
+data <- na.omit(data)
+
+# Verify that the lengths match
+if(length(data$Lineage_gr) != length(data$`Origin country`)) {
+  stop("Mismatch in lengths of Lineage_gr and Origin country columns")
+}
+
+# Generate the contingency table
+table_data <- table(data$Lineage_gr, data$`Origin country`)
+
+# Extract the counts for Spain to use as the reference
+counts_spain <- table_data[, "Spain"]
+total_spain <- sum(counts_spain)
+freq_spain <- counts_spain / total_spain
+
+# Exclude countries with fewer than 10 cases
+countries_to_include <- colnames(table_data)[colSums(table_data) >= 5]
+
+# Initialize lists to store results
+chisq_results <- list()
+prop_test_results <- list()
+
+# Loop through each country (excluding Spain) and with at least 10 cases
+for (country in intersect(countries_to_include, colnames(table_data))) {
+  if (country != "Spain") {
+    counts_country <- table_data[, country]
+    total_country <- sum(counts_country)
+    
+    # Perform chi-squared test
+    chisq_test <- chisq.test(x = counts_country, p = freq_spain)
+    chisq_results[[country]] <- chisq_test
+    
+    # Perform post-hoc proportion tests if chi-squared test is significant
+    if (chisq_test$p.value < 0.05) {
+      prop_tests <- list()
+      for (i in 1:length(counts_country)) {
+        prop_test <- prop.test(x = counts_country[i], n = total_country, p = freq_spain[i])
+        prop_tests[[rownames(table_data)[i]]] <- prop_test
+      }
+      prop_test_results[[country]] <- prop_tests
+    }
+  }
+}
+
+# Print results
+for (country in names(chisq_results)) {
+  cat("\nChi-squared test for", country, ":\n")
+  print(chisq_results[[country]])
+  
+  if (!is.null(prop_test_results[[country]])) {
+    cat("\nPost-hoc proportion tests for", country, ":\n")
+    for (lineage in names(prop_test_results[[country]])) {
+      cat("\nProportion test for lineage", lineage, ":\n")
+      print(prop_test_results[[country]][[lineage]])
+    }
+  }
+}
+
+
+```
+
+```{r}
+
+######################## FISHER TEST: COUNTRY OF ORIGINS vs. SPANIARDS ####################################################
+
+# Select relevant columns from the dataset
+data <- data[, c("Lineage_gr", "Origin country")]
+
+# Check for missing values in the selected columns
+sum(is.na(data$Lineage_gr))  # Number of missing values in Lineage_gr
+sum(is.na(data$`Origin country`))  # Number of missing values in Origin country
+
+# Remove rows with missing values in the relevant columns
+data <- na.omit(data)
+
+# Verify that the lengths match
+if(length(data$Lineage_gr) != length(data$`Origin country`)) {
+  stop("Mismatch in lengths of Lineage_gr and Origin country columns")
+}
+
+# Generate the contingency table
+table_data <- table(data$Lineage_gr, data$`Origin country`)
+
+# Extract the counts for Spain to use as the reference
+counts_spain <- table_data[, "Spain"]
+total_spain <- sum(counts_spain)
+freq_spain <- counts_spain / total_spain
+
+# Exclude countries with fewer than 10 cases
+countries_to_include <- colnames(table_data)[colSums(table_data) >= 5]
+
+# Initialize lists to store results
+fisher_results <- list()
+prop_test_results <- list()
+
+# Loop through each country (excluding Spain) and with at least 10 cases
+for (country in intersect(countries_to_include, colnames(table_data))) {
+  if (country != "Spain") {
+    counts_country <- table_data[, country]
+    total_country <- sum(counts_country)
+    
+    # Perform Fisher's exact test
+    fisher_test <- fisher.test(x = table_data[, c("Spain", country)])
+    fisher_results[[country]] <- fisher_test
+    
+    # Perform post-hoc proportion tests if Fisher's test is significant
+    if (fisher_test$p.value < 0.05) {
+      prop_tests <- list()
+      for (i in 1:length(counts_country)) {
+        prop_test <- prop.test(x = counts_country[i], n = total_country, p = freq_spain[i])
+        prop_tests[[rownames(table_data)[i]]] <- prop_test
+      }
+      prop_test_results[[country]] <- prop_tests
+    }
+  }
+}
+
+# Print results
+for (country in names(fisher_results)) {
+  cat("\nFisher's exact test for", country, ":\n")
+  print(fisher_results[[country]])
+  
+  if (!is.null(prop_test_results[[country]])) {
+    cat("\nPost-hoc proportion tests for", country, ":\n")
+    for (lineage in names(prop_test_results[[country]])) {
+      cat("\nProportion test for lineage", lineage, ":\n")
+      print(prop_test_results[[country]][[lineage]])
+    }
+  }
+}
+
+
+
+```
+
+
+```{r}
+################### FISHER TEST: COUNTRY OF ORIGINS vs. SPANIARDS (FOR ALL LINEAGES, including L1 and L2) #################
+
+# Select relevant columns from the dataset
+data <- data[, c("Lineage_gr", "Origin country")]
+
+# Check for missing values in the selected columns
+sum(is.na(data$Lineage_gr))  # Number of missing values in Lineage_gr
+sum(is.na(data$`Origin country`))  # Number of missing values in Origin country
+
+# Remove rows with missing values in the relevant columns
+data <- na.omit(data)
+
+# Verify that the lengths match
+if(length(data$Lineage_gr) != length(data$`Origin country`)) {
+  stop("Mismatch in lengths of Lineage_gr and Origin country columns")
+}
+
+# Generate the contingency table
+table_data <- table(data$Lineage_gr, data$`Origin country`)
+
+# Extract the counts for Spain to use as the reference
+counts_spain <- table_data[, "Spain"]
+total_spain <- sum(counts_spain)
+freq_spain <- counts_spain / total_spain
+
+# Exclude countries with fewer than 5 cases
+countries_to_include <- colnames(table_data)[colSums(table_data) >= 5]
+
+# Initialize lists to store results
+fisher_results <- list()
+prop_test_results <- list()
+
+# Loop through each country (excluding Spain) and with at least 5 cases
+for (country in intersect(countries_to_include, colnames(table_data))) {
+  if (country != "Spain") {
+    counts_country <- table_data[, country]
+    total_country <- sum(counts_country)
+    
+    # Perform Fisher's exact test with simulation for large tables
+    contingency_table <- table_data[, c("Spain", country)]
+    fisher_test <- fisher.test(contingency_table, simulate.p.value = TRUE)
+    fisher_results[[country]] <- fisher_test
+    
+    # Perform post-hoc proportion tests if Fisher's test is significant
+    if (fisher_test$p.value < 0.05) {
+      prop_tests <- list()
+      for (i in seq_along(counts_country)) {
+        # Ensure the proportion values are between 0 and 1
+        p_spain <- freq_spain[i]
+        if (p_spain > 0 && p_spain < 1) {
+          prop_test <- prop.test(x = counts_country[i], n = total_country, p = p_spain)
+          prop_tests[[rownames(table_data)[i]]] <- prop_test
+        }
+      }
+      prop_test_results[[country]] <- prop_tests
+    }
+  }
+}
+
+# Print results for verification
+print(fisher_results)
+print(prop_test_results)
+
+```
+
+
+
